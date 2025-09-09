@@ -7,13 +7,24 @@ import "./Body.css";
 
 const GEMINI_API_KEY = "AIzaSyAVdn4cMVUEK8WaSYBzSa8CZexOjCtY10A";
 
-async function getGeminiResponse(userMessage) {
+//Gemini API call
+async function getGeminiResponse(userMessage, memory) {
   const url =
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+
+  //  the uploaded doc
+  let finalMessage = userMessage;
+  if (
+    memory.lastDocument &&
+    /document|file|upload|summarize/i.test(userMessage)
+  ) {
+    finalMessage += `\n\n(Here is the uploaded document content: ${memory.lastDocument.content})`;
+  }
+
   try {
     const { data } = await axios.post(
       url,
-      { contents: [{ parts: [{ text: userMessage }] }] },
+      { contents: [{ parts: [{ text: finalMessage }] }] },
       {
         headers: {
           "Content-Type": "application/json",
@@ -21,7 +32,6 @@ async function getGeminiResponse(userMessage) {
         },
       }
     );
-
     return (
       data?.candidates?.[0]?.content?.parts?.[0]?.text ??
       "Sorry, I couldn't get a response from Gemini."
@@ -33,7 +43,7 @@ async function getGeminiResponse(userMessage) {
 }
 
 export default function Body() {
-  // Load sessions from localStorage
+  
   const [sessions, setSessions] = useState(() => {
     try {
       const saved = localStorage.getItem("chatSessions");
@@ -50,7 +60,7 @@ export default function Body() {
     }
   });
 
-  // active session id
+
   const [activeId, setActiveId] = useState(() => {
     return (
       localStorage.getItem("activeChatId") ||
@@ -58,14 +68,16 @@ export default function Body() {
     );
   });
 
-  // UI state
+ 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [memory, setMemory] = useState({ lastDocument: null });
 
   const endRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  // persist sessions + activeId
+  
   useEffect(() => {
     try {
       localStorage.setItem("chatSessions", JSON.stringify(sessions));
@@ -75,12 +87,11 @@ export default function Body() {
     }
   }, [sessions, activeId]);
 
-  // auto-scroll to bottom
+  
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [activeId, sessions]);
 
-  // helper
   const activeMessages = sessions?.[activeId]?.messages || [];
 
   const onNewChat = () => {
@@ -94,6 +105,7 @@ export default function Body() {
     setText("");
   };
 
+  
   const onDeleteChat = (id) => {
     if (!confirm("Delete this chat?")) return;
     setSessions((prev) => {
@@ -114,6 +126,7 @@ export default function Body() {
     });
   };
 
+  // send message
   const onSend = async () => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
@@ -139,7 +152,7 @@ export default function Body() {
     setText("");
     setSending(true);
 
-    const botReply = await getGeminiResponse(trimmed);
+    const botReply = await getGeminiResponse(trimmed, memory);
 
     setSessions((prev) => ({
       ...prev,
@@ -151,7 +164,59 @@ export default function Body() {
     setSending(false);
   };
 
-  // Render
+  // 🔹 File upload click
+  const onFileUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  // 🔹 File selected
+  const onFileSelected = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // show in chat
+    const userMsg = { role: "user", text: `📄 Document uploaded: ${file.name}` };
+    const updatedMessages = [...activeMessages, userMsg];
+    setSessions((prev) => ({
+      ...prev,
+      [activeId]: { ...prev[activeId], messages: updatedMessages },
+    }));
+
+    // extract content
+    let textContent = "";
+    if (file.type === "text/plain") {
+      textContent = await file.text();
+    } else if (file.type === "application/pdf") {
+      const pdfjsLib = await import("pdfjs-dist");
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const txt = await page.getTextContent();
+        textContent += txt.items.map((s) => s.str).join(" ") + "\n";
+      }
+    } else if (
+      file.type ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      const mammoth = await import("mammoth");
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      textContent = result.value;
+    } else {
+      alert("Unsupported file type. Please upload TXT, PDF, or DOCX.");
+      return;
+    }
+
+    // store in memory
+    setMemory((prev) => ({
+      ...prev,
+      lastDocument: { name: file.name, content: textContent },
+    }));
+
+    e.target.value = "";
+  };
+
   return (
     <div className="app">
       {/* Header */}
@@ -220,14 +285,11 @@ export default function Body() {
         />
       </aside>
 
-      {/* Main content */}
+      {/* Main */}
       <main className="main">
         <div className="messages">
           {activeMessages.map((m, i) => (
-            <div
-              key={i}
-              className={`msg ${m.role === "user" ? "user" : "bot"}`}
-            >
+            <div key={i} className={`msg ${m.role === "user" ? "user" : "bot"}`}>
               <div className="bubble">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {String(m.text || "")}
@@ -238,6 +300,7 @@ export default function Body() {
           <div ref={endRef} />
         </div>
 
+        {/* Input bar */}
         <div className="input-bar">
           <input
             type="text"
@@ -248,9 +311,21 @@ export default function Body() {
               if (e.key === "Enter") onSend();
             }}
           />
-          <button className="plus-btn" type="button" title="Add">
+          <button
+            className="plus-btn"
+            type="button"
+            title="Upload Document"
+            onClick={onFileUploadClick}
+          >
             <FaPlus />
           </button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            style={{ display: "none" }}
+            accept=".txt,.pdf,.docx"
+            onChange={onFileSelected}
+          />
           <button
             className="send-btn"
             type="button"
