@@ -150,6 +150,7 @@ html, body {
 .msg.user .bubble { background: #0a2cff; color: #fff; border-color: #0a2cff; }
 
 /* Input bar (sticks to bottom, outside of scroll) */
+/* Input bar (sticks to bottom, outside of scroll) */
 .input-bar {
   display: flex;
   align-items: center;
@@ -158,6 +159,23 @@ html, body {
   border-top: 1px solid #222;
   background: #0f0f0f;
 }
+
+/* ✅ Mobile fix: keep input bar fixed at bottom */
+@media (max-width: 768px) {
+  .input-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+  }
+
+  /* prevent messages from hiding behind input bar */
+  .messages {
+    padding-bottom: 70px; /* extra space for input bar */
+  }
+}
+
 .input-bar input {
   flex: 1;
   background: #1b1b1b; color: #eee; border: 1px solid #2a2a2a;
